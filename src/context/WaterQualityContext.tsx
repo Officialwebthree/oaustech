@@ -6,6 +6,8 @@ type WaterQualityContextType = {
   ph: number;
   salinity: number;
   temperature: number;
+  isConnected: boolean;
+  lastUpdate: Date | null;
   trendData: Array<{
     time: number;
     temperature: number;
@@ -40,83 +42,81 @@ type WaterQualityProviderProps = {
 export const WaterQualityProvider: React.FC<WaterQualityProviderProps> = ({ children }) => {
   const [waterLevel, setWaterLevel] = useState(75);
   const [turbidity, setTurbidity] = useState(4.5);
-  const [ph] = useState(7.1);
+  const [ph, setPh] = useState(7.1);
   const [salinity, setSalinity] = useState(85);
   const [temperature, setTemperature] = useState(31.5);
+  const [isConnected, setIsConnected] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [trendData, setTrendData] = useState<WaterQualityContextType['trendData']>([]);
-  const [historicalData] = useState<WaterQualityContextType['historicalData']>(() => {
-    const past7Days = Array.from({ length: 7 }, (_, i) => {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      return {
-        date: date.toISOString(),
-        temperature: 31 + Math.random(),
-        ph: 7.1 + (Math.random() * 0.4 - 0.2),
-        turbidity: 4 + Math.random(),
-        salinity: 85 + (Math.random() * 10 - 5),
-        status: Math.random() > 0.8 ? 'Warning' : 'Optimal'
-      };
-    }).reverse();
-    return past7Days;
-  });
+  const [historicalData, setHistoricalData] = useState<WaterQualityContextType['historicalData']>([]);
 
-  // Update trend data
-  useEffect(() => {
-    const updateTrend = () => {
-      const now = Date.now();
-      setTrendData(prev => {
-        const newData = [...prev, {
-          time: now,
-          temperature,
-          ph,
-          turbidity,
-          salinity
-        }];
-        if (newData.length > 3600) {
-          return newData.slice(-3600);
+  // API base URL - adjust this based on your server setup
+  const API_BASE_URL = 'http://localhost:3001/api';
+
+  // Fetch sensor data from the API
+  const fetchSensorData = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/sensor-data`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      
+      if (result.success && result.data) {
+        const { data, trendData: apiTrendData, historicalData: apiHistoricalData } = result;
+        
+        // Update sensor values
+        setWaterLevel(data.waterLevel);
+        setTurbidity(data.turbidity);
+        setPh(data.ph);
+        setSalinity(data.salinity);
+        setTemperature(data.temperature);
+        setLastUpdate(new Date(data.timestamp));
+        
+        // Update trend and historical data
+        if (apiTrendData) {
+          setTrendData(apiTrendData);
         }
-        return newData;
-      });
-    };
+        if (apiHistoricalData) {
+          setHistoricalData(apiHistoricalData);
+        }
+        
+        setIsConnected(true);
+      }
+    } catch (error) {
+      console.error('Error fetching sensor data:', error);
+      setIsConnected(false);
+    }
+  };
 
-    const trendInterval = setInterval(updateTrend, 1000);
-    return () => clearInterval(trendInterval);
-  }, [temperature, ph, turbidity, salinity]);
-
-  // Simulate fluctuating readings
+  // Fetch data on component mount and set up polling
   useEffect(() => {
-    const updateInterval = setInterval(() => {
-      setTurbidity(prev => {
-        const fluctuation = Math.random() * 0.1 - 0.05;
-        return Math.max(4, Math.min(5, prev + fluctuation));
-      });
-      
-      setSalinity(prev => {
-        const fluctuation = Math.random() * 2 - 1;
-        return Math.max(70, Math.min(95, prev + fluctuation));
-      });
-      
-      setTemperature(prev => {
-        const fluctuation = Math.random() * 0.2 - 0.1;
-        return Math.max(31, Math.min(32, prev + fluctuation));
-      });
-    }, 1000);
-
-    return () => clearInterval(updateInterval);
+    // Initial fetch
+    fetchSensorData();
+    
+    // Set up polling every 2 seconds
+    const interval = setInterval(fetchSensorData, 2000);
+    
+    return () => clearInterval(interval);
   }, []);
 
-  // Simulate water level changes
+  // Check connection status
   useEffect(() => {
-    const waterLevelInterval = setInterval(() => {
-      if (Math.random() > 0.7) {
-        setWaterLevel((prev) => {
-          const change = Math.random() * 5 - 2.5;
-          return Math.max(20, Math.min(95, prev + change));
-        });
+    const checkConnection = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/health`);
+        setIsConnected(response.ok);
+      } catch (error) {
+        setIsConnected(false);
       }
-    }, 3000);
+    };
 
-    return () => clearInterval(waterLevelInterval);
+    // Check connection every 10 seconds
+    const connectionInterval = setInterval(checkConnection, 10000);
+    
+    return () => clearInterval(connectionInterval);
   }, []);
 
   const value = {
@@ -125,6 +125,8 @@ export const WaterQualityProvider: React.FC<WaterQualityProviderProps> = ({ chil
     ph,
     salinity,
     temperature,
+    isConnected,
+    lastUpdate,
     trendData,
     historicalData
   };
